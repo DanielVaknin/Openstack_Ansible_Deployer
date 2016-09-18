@@ -1,0 +1,119 @@
+---
+- hosts: test
+  vars:
+    neutron_dbpass: '97bd79eb4954f5f4f9b6'
+    neutron_pass: 'Neutron123'
+    admin_password: 'Aa123456'
+    controller_name: 'controller0'
+    rabbit_pass: '830373bd928e23be84ab'
+    metadata_secret: 'secret'
+  environment:
+    OS_PROJECT_DOMAIN_NAME: default
+    OS_USER_DOMAIN_NAME: default
+    OS_PROJECT_NAME: admin
+    OS_USERNAME: admin
+    OS_PASSWORD: Aa123456
+    OS_AUTH_URL: http://{{ controller_name }}:35357/v3
+    OS_IDENTITY_API_VERSION: 3
+    OS_IMAGE_API_VERSION: 2
+  tasks:
+  - name: Create the neutron database
+    mysql_db: login_user=root login_password=Aa123456 name=neutron state=present
+  - name: Grant proper access to the databases
+    mysql_user: login_user=root
+                login_password=Aa123456
+                name=neutron
+                password={{ neutron_dbpass }}
+                priv={{ item.priv }}
+                host={{ item.host }}
+                state=present
+                append_privs=yes
+    with_items:
+      - { priv: 'neutron.*', host: 'localhost' }
+      - { priv: 'neutron.*', host: '%' }
+  - name: Create the neutron user
+    os_user:
+      state: present
+      name: neutron
+      password: "{{ neutron_pass }}"
+      domain: default
+      auth_type: password
+      auth:
+        username: admin
+        password: Aa123456
+        auth_url: http://{{ controller_name }}:35357/v3
+  - name: Add the admin role to the neutron user
+    os_user_role:
+      user: neutron
+      role: admin
+      project: service
+  - name: Create the neutron service entity
+    os_keystone_service:
+      state: present
+      name: neutron
+      service_type: network
+      description: OpenStack Networking
+### Replace with shell script
+  - name: Create the Networking service API endpoint - public
+    shell: openstack endpoint create --region RegionOne network public http://{{ controller_name }}:9696
+  - name: Create the Networking service API endpoint - internal
+    shell: openstack endpoint create --region RegionOne network internal http://{{ controller_name }}:9696
+  - name: Create the Networking service API endpoint - admin
+    shell: openstack endpoint create --region RegionOne network admin http://{{ controller_name }}:9696
+###
+
+
+  - include: neutron_controller_self_service.yml
+    vars:
+      
+
+  - name: Configure the metadata agent
+    ini_file: dest=/etc/neutron/metadata_agent.ini
+              section={{ item.section }}
+              option={{ item.option }}
+              value={{ item.value }}
+              backup={{ item.backup }}
+    with_items:
+      - { section: 'DEFAULT', option: 'nova_metadata_ip', value: '{{ controller_name }}', backup: 'yes' }
+      - { section: 'DEFAULT', option: 'metadata_proxy_shared_secret', value: '{{ metadata_secret }}', backup: 'no' }
+
+  - name: Configure Compute to use Networking
+    ini_file: dest=/etc/nova/nova.conf
+              section={{ item.section }}
+              option={{ item.option }}
+              value={{ item.value }}
+              backup={{ item.backup }}
+    with_items:
+      - { section: 'neutron', option: 'url', value: 'http://{{ controller_name }}:9696', backup: 'yes' }
+      - { section: 'neutron', option: 'auth_url', value: 'http://{{ controller_name }}:35357', backup: 'no' }
+      - { section: 'neutron', option: 'auth_type', value: 'password', backup: 'no' }
+      - { section: 'neutron', option: 'project_domain_name', value: 'default', backup: 'no' }
+      - { section: 'neutron', option: 'user_domain_name', value: 'default', backup: 'no' }
+      - { section: 'neutron', option: 'region_name', value: 'RegionOne', backup: 'no' }
+      - { section: 'neutron', option: 'project_name', value: 'service', backup: 'no' }
+      - { section: 'neutron', option: 'username', value: 'neutron', backup: 'no' }
+      - { section: 'neutron', option: 'password', value: '{{ neutron_pass }}', backup: 'no' }
+      - { section: 'neutron', option: 'service_metadata_proxy', value: 'True', backup: 'no' }
+      - { section: 'neutron', option: 'metadata_proxy_shared_secret', value: '{{ metadata_secret }}', backup: 'no' }
+
+  - name: Create a symbolic link /etc/neutron/plugin.ini pointing to the ML2 plug-in configuration file
+    shell: ln -s /etc/neutron/plugins/ml2/ml2_conf.ini /etc/neutron/plugin.ini
+  - name: Populate the databases
+    shell: "neutron-db-manage --config-file /etc/neutron/neutron.conf --config-file /etc/neutron/plugins/ml2/ml2_conf.ini upgrade head"
+    args:
+      executable: /bin/sh
+    become: true
+    become_user: neutron
+  - name: Restart the Compute API service
+    service: name=openstack-nova-api.service state=restarted
+  - name: Start the Networking services and configure them to start when the system boots
+    service: name={{ item }} state=started enabled=yes
+    with_items:
+      - neutron-server.service
+      - neutron-linuxbridge-agent.service
+      - neutron-dhcp-agent.service
+      - neutron-metadata-agent.service
+  - name: Enable and start the layer-3 service
+    service: name={{ item }} state=started enabled=yes
+    with_items:
+      - neutron-l3-agent.service

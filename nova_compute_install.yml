@@ -1,0 +1,54 @@
+---
+- hosts: test-compute
+  vars:
+    nova_pass: 'Nova123'
+    controller_name: 'controller0'
+    rabbit_pass: '830373bd928e23be84ab'
+  tasks:
+  - name: Install Nova packages
+    yum: name=openstack-nova-compute state=present
+  - name: Edit the /etc/nova/nova.conf file
+    ini_file: dest=/etc/nova/nova.conf
+              section={{ item.section }}
+              option={{ item.option }}
+              value={{ item.value }}
+              backup={{ item.backup }}
+    with_items:
+      - { section: 'DEFAULT', option: 'rpc_backend', value: 'rabbit', backup: 'yes' }
+      - { section: 'oslo_messaging_rabbit', option: 'rabbit_host', value: '{{ controller_name }}', backup: 'no' }
+      - { section: 'oslo_messaging_rabbit', option: 'rabbit_userid', value: 'openstack', backup: 'no' }
+      - { section: 'oslo_messaging_rabbit', option: 'rabbit_password', value: '{{ rabbit_pass }}', backup: 'no' }
+      - { section: 'DEFAULT', option: 'auth_strategy', value: 'keystone', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_uri', value: 'http://{{ controller_name }}:5000', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_url', value: 'http://{{ controller_name }}:35357', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'memcached_servers', value: '{{ controller_name }}:11211', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_type', value: 'password', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'project_domain_name', value: 'default', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'user_domain_name', value: 'default', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'project_name', value: 'service', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'username', value: 'nova', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'password', value: '{{ nova_pass }}', backup: 'no' }
+      - { section: 'DEFAULT', option: 'my_ip', value: '{{ ansible_default_ipv4.address }}', backup: 'no' }
+      - { section: 'DEFAULT', option: 'use_neutron', value: 'True', backup: 'no' }
+      - { section: 'DEFAULT', option: 'firewall_driver', value: 'nova.virt.firewall.NoopFirewallDriver', backup: 'no' }
+      - { section: 'vnc', option: 'enabled', value: 'True', backup: 'no' }
+      - { section: 'vnc', option: 'vncserver_listen', value: '0.0.0.0', backup: 'no' }
+      - { section: 'vnc', option: 'vncserver_proxyclient_address', value: '$my_ip', backup: 'no' }
+      - { section: 'vnc', option: 'novncproxy_base_url', value: 'http://{{ controller_name }}:6080/vnc_auto.html', backup: 'no' }
+      - { section: 'glance', option: 'api_servers', value: 'http://{{ controller_name }}:9292', backup: 'no' }
+      - { section: 'oslo_concurrency', option: 'lock_path', value: '/var/lib/nova/tmp', backup: 'no' }
+  - name: Check support for hardware acceleration for virtual machines
+    shell: egrep -c '(vmx|svm)' /proc/cpuinfo
+    register: hardware_acc_support
+  - name: Configure libvirt to use QEMU instead of KVM if the compute node doesn't support hardware acceleration
+    ini_file: dest=/etc/nova/nova.conf
+              section=libvirt
+              option=virt_type
+              value=qemu
+              backup=yes
+    when: hardware_acc_support.stdout == 0
+  - name: Start the Compute service including its dependencies and configure them to start automatically when the system boots
+    service: name={{ item }} state=started enabled=yes
+    with_items:
+      - libvirtd.service
+      - openstack-nova-compute.service

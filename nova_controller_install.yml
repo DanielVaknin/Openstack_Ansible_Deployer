@@ -1,0 +1,117 @@
+---
+- hosts: test
+  vars:
+    nova_dbpass: '679e44a7fedbe0b7be8a'
+    nova_pass: 'Nova123'
+    admin_password: 'Aa123456'
+    controller_name: 'controller0'
+    rabbit_pass: '830373bd928e23be84ab'
+  environment:
+    OS_PROJECT_DOMAIN_NAME: default
+    OS_USER_DOMAIN_NAME: default
+    OS_PROJECT_NAME: admin
+    OS_USERNAME: admin
+    OS_PASSWORD: Aa123456
+    OS_AUTH_URL: http://{{ controller_name }}:35357/v3
+    OS_IDENTITY_API_VERSION: 3
+    OS_IMAGE_API_VERSION: 2
+  tasks:
+  - name: Create the nova_api and nova databases
+    mysql_db: login_user=root login_password=Aa123456 name={{ item }} state=present
+    with_items:
+      - nova_api
+      - nova
+  - name: Grant proper access to the databases
+    mysql_user: login_user=root
+                login_password=Aa123456
+                name=nova
+                password={{ nova_dbpass }}
+                priv={{ item.priv }}
+                host={{ item.host }}
+                state=present
+                append_privs=yes
+    with_items:
+      - { priv: 'nova_api.*:ALL', host: 'localhost' }
+      - { priv: 'nova_api.*:ALL', host: '%' }
+      - { priv: 'nova.*:ALL', host: 'localhost' }
+      - { priv: 'nova.*:ALL', host: '%' }
+  - name: Create the nova user
+    os_user:
+      state: present
+      name: nova
+      password: "{{ nova_pass }}"
+      domain: default
+      auth_type: password
+      auth:
+        username: admin
+        password: Aa123456
+        auth_url: http://{{ controller_name }}:35357/v3
+  - name: Add the admin role to the nova user
+    os_user_role:
+      user: nova
+      role: admin
+      project: service
+  - name: Create the nova service entity
+    os_keystone_service:
+      state: present
+      name: nova
+      service_type: compute
+      description: OpenStack Compute
+### Replace with shell script
+  - name: Create the Compute service API endpoint - public
+    shell: openstack endpoint create --region RegionOne compute public http://{{ controller_name }}:8774/v2.1/%\(tenant_id\)s
+  - name: Create the Compute service API endpoint - internal
+    shell: openstack endpoint create --region RegionOne compute internal http://{{ controller_name }}:8774/v2.1/%\(tenant_id\)s
+  - name: Create the Compute service API endpoint - admin
+    shell: openstack endpoint create --region RegionOne compute admin http://{{ controller_name }}:8774/v2.1/%\(tenant_id\)s
+###
+  - name: Install Nova packages
+    yum: name=openstack-nova-api,openstack-nova-conductor,openstack-nova-console,openstack-nova-novncproxy,openstack-nova-scheduler state=present
+  - name: Edit the /etc/nova/nova.conf file
+    ini_file: dest=/etc/nova/nova.conf
+              section={{ item.section }}
+              option={{ item.option }}
+              value={{ item.value }}
+              backup={{ item.backup }}
+    with_items:
+      - { section: 'DEFAULT', option: 'enabled_apis', value: 'osapi_compute,metadata', backup: 'yes' }
+      - { section: 'api_database', option: 'connection', value: 'mysql+pymysql://nova:{{ nova_dbpass }}@{{ controller_name }}/nova_api', backup: 'no' }
+      - { section: 'database', option: 'connection', value: 'mysql+pymysql://nova:{{ nova_dbpass }}@{{ controller_name }}/nova', backup: 'no' }
+      - { section: 'DEFAULT', option: 'rpc_backend', value: 'rabbit', backup: 'no' }
+      - { section: 'oslo_messaging_rabbit', option: 'rabbit_host', value: '{{ controller_name }}', backup: 'no' }
+      - { section: 'oslo_messaging_rabbit', option: 'rabbit_userid', value: 'openstack', backup: 'no' }
+      - { section: 'oslo_messaging_rabbit', option: 'rabbit_password', value: '{{ rabbit_pass }}', backup: 'no' }
+      - { section: 'DEFAULT', option: 'auth_strategy', value: 'keystone', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_uri', value: 'http://{{ controller_name }}:5000', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_url', value: 'http://{{ controller_name }}:35357', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'memcached_servers', value: '{{ controller_name }}:11211', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_type', value: 'password', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'project_domain_name', value: 'default', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'user_domain_name', value: 'default', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'project_name', value: 'service', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'username', value: 'nova', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'password', value: '{{ nova_pass }}', backup: 'no' }
+      - { section: 'DEFAULT', option: 'my_ip', value: '{{ ansible_default_ipv4.address }}', backup: 'no' }
+      - { section: 'DEFAULT', option: 'use_neutron', value: 'True', backup: 'no' }
+      - { section: 'DEFAULT', option: 'firewall_driver', value: 'nova.virt.firewall.NoopFirewallDriver', backup: 'no' }
+      - { section: 'vnc', option: 'vncserver_listen', value: '$my_ip', backup: 'no' }
+      - { section: 'vnc', option: 'vncserver_proxyclient_address', value: '$my_ip', backup: 'no' }
+      - { section: 'glance', option: 'api_servers', value: 'http://{{ controller_name }}:9292', backup: 'no' }
+      - { section: 'oslo_concurrency', option: 'lock_path', value: '/var/lib/nova/tmp', backup: 'no' }
+  - name: Populate the Compute databases
+    shell: "{{ item }}"
+    with_items:
+      - nova-manage api_db sync
+      - nova-manage db sync
+    args:
+      executable: /bin/sh
+    become: true
+    become_user: nova
+  - name: Start the Compute services and configure them to start when the system boots
+    service: name={{ item }} state=started enabled=yes
+    with_items:
+      - openstack-nova-api.service
+      - openstack-nova-consoleauth.service
+      - openstack-nova-scheduler.service
+      - openstack-nova-conductor.service
+      - openstack-nova-novncproxy.service

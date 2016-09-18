@@ -1,0 +1,191 @@
+---
+- hosts: test
+  tasks:
+  - name: Install the components
+    yum: name=openstack-neutron,openstack-neutron-ml2,openstack-neutron-linuxbridge,ebtables state=present
+  - name: Configure the server component
+    ini_file: dest=/etc/neutron/neutron.conf
+              section={{ item.section }}
+              option={{ item.option }}
+              value={{ item.value }}
+              backup={{ item.backup }}
+    with_items:
+      - { section: 'database', option: 'connection', value: 'mysql+pymysql://neutron:{{ neutron_dbpass }}@{{ controller_name }}/neutron', backup: 'yes' }
+      - { section: 'DEFAULT', option: 'core_plugin', value: 'ml2', backup: 'no' }
+      - { section: 'DEFAULT', option: 'service_plugins', value: 'router', backup: 'no' }
+      - { section: 'DEFAULT', option: 'allow_overlapping_ips', value: 'True', backup: 'no' }
+      - { section: 'DEFAULT', option: 'rpc_backend', value: 'rabbit', backup: 'no' }
+      - { section: 'oslo_messaging_rabbit', option: 'rabbit_host', value: '{{ controller_name }}', backup: 'no' }
+      - { section: 'oslo_messaging_rabbit', option: 'rabbit_userid', value: 'openstack', backup: 'no' }
+      - { section: 'oslo_messaging_rabbit', option: 'rabbit_password', value: '{{ rabbit_pass }}', backup: 'no' }
+      - { section: 'DEFAULT', option: 'auth_strategy', value: 'keystone', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_uri', value: 'http://{{ controller_name }}:5000', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_url', value: 'http://{{ controller_name }}:35357', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'memcached_servers', value: '{{ controller_name }}:11211', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_type', value: 'password', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'project_domain_name', value: 'default', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'user_domain_name', value: 'default', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'project_name', value: 'service', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'username', value: 'neutron', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'password', value: '{{ neutron_pass }}', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+      - { section: '', option: '', value: '', backup: 'no' }
+  - name: Populate the Identity service database
+    shell: /usr/bin/keystone-manage db_sync
+    args:
+      executable: /bin/sh
+    become: true
+    become_user: keystone
+  - name: Initialize Fernet keys
+    shell: keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone
+  - name: Edit the /etc/httpd/conf/httpd.conf file
+    replace: dest=/etc/httpd/conf/httpd.conf
+             regexp='^(#ServerName).*$'
+             replace='ServerName {{ controller_name }}'
+             backup=yes
+  - name: Upload the wsgi-keystone.conf file
+    copy:
+      src: ./files/wsgi-keystone.conf
+      dest: '/etc/httpd/conf.d/wsgi-keystone.conf'
+    sudo: yes
+  - name: Start the Apache HTTP service and configure it to start when the system boots
+    service: name=httpd.service state=started enabled=yes
+  - name: Install python-pip package
+    yum: name=python-pip state=present
+  - name: Install shade
+    pip: name=shade
+  - name: Create the service entity for the Identity service
+    keystone_service:
+      token: "{{ keystone_admin_token }}"
+      name: keystone
+      type: identity
+      description: OpenStack Identity
+      publicurl: http://{{ controller_name }}:5000/v3
+      internalurl: http://{{ controller_name }}:5000/v3
+      adminurl: http://{{ controller_name }}:35357/v3
+    environment:
+      OS_TOKEN: "{{ keystone_admin_token }}"
+      OS_URL: http://{{ controller_name }}:35357/v3
+      OS_IDENTITY_API_VERSION: 3
+#  - name: Create the default domain
+#    os_keystone_domain: 
+#      state: present
+#      name: default
+#      description: Default Domain
+#      auth_type: token_endpoint
+#      auth:
+#        url: "http://controller0:35357/v3"
+#        auth_token: "{{ keystone_admin_token }}"
+  - name: Create the default domain
+    shell: openstack domain create --description "Default Domain" default
+    environment:
+      OS_TOKEN: "{{ keystone_admin_token }}"
+      OS_URL: http://{{ controller_name }}:35357/v3
+      OS_IDENTITY_API_VERSION: 3
+    ignore_errors: True
+  - name: Create the admin project
+    shell: openstack project create --domain default --description "Admin Project" admin
+    ignore_errors: True
+    environment:
+      OS_TOKEN: "{{ keystone_admin_token }}"
+      OS_URL: http://{{ controller_name }}:35357/v3
+      OS_IDENTITY_API_VERSION: 3
+  - name: Create the admin user
+    shell: openstack user create --domain default --password {{ admin_password }} admin
+    environment:
+      OS_TOKEN: "{{ keystone_admin_token }}"
+      OS_URL: http://{{ controller_name }}:35357/v3
+      OS_IDENTITY_API_VERSION: 3
+    ignore_errors: True
+  - name: Create the admin role
+    shell: openstack role create admin
+    ignore_errors: True
+    environment:
+      OS_TOKEN: "{{ keystone_admin_token }}"
+      OS_URL: http://{{ controller_name }}:35357/v3
+      OS_IDENTITY_API_VERSION: 3
+  - name: Add the admin role to the admin project and user
+    shell: openstack role add --project admin --user admin admin
+    ignore_errors: True
+    environment:
+      OS_TOKEN: "{{ keystone_admin_token }}"
+      OS_URL: http://{{ controller_name }}:35357/v3
+      OS_IDENTITY_API_VERSION: 3
+  - name: Create the service project
+    os_project:
+      state: present
+      name: service
+      domain: default
+      description: Service Project
+      enabled: True
+  - name: Create the demo project
+    os_project:
+      state: present
+      name: demo
+      domain: default
+      description: Demo Project
+      enabled: True
+  - name: Create the demo user
+    os_user:
+      state: present
+      name: demo
+      password: Aa123456
+      domain: default
+  - name: Create the user role
+    os_keystone_role:
+      state: present
+      name: user
+  - name: Add the user role to the demo project and user
+    os_user_role:
+      user: demo
+      role: user
+      project: demo
+  - name: Disable the temporary authentication token mechanism
+    replace: dest=/etc/keystone/keystone-paste.ini
+             regexp='( admin_token_auth )'
+             replace=' '
+             backup=yes
+  - name: Create client environment scripts for the admin project
+    lineinfile: dest=/root/admin-openrc create=yes line={{ item }}
+    with_items:
+      - "export OS_PROJECT_DOMAIN_NAME=default"
+      - "export OS_USER_DOMAIN_NAME=default"
+      - "export OS_PROJECT_NAME=admin"
+      - "export OS_USERNAME=admin"
+      - "export OS_PASSWORD={{ admin_password }}"
+      - "export OS_AUTH_URL=http://{{ controller_name }}:35357/v3"
+      - "export OS_IDENTITY_API_VERSION=3"
+      - "export OS_IMAGE_API_VERSION=2"
+  - name: Create client environment scripts for the demo project
+    lineinfile: dest=/root/demo-openrc create=yes line={{ item }}
+    with_items:
+      - "export OS_PROJECT_DOMAIN_NAME=default"
+      - "export OS_USER_DOMAIN_NAME=default"
+      - "export OS_PROJECT_NAME=demo"
+      - "export OS_USERNAME=demo"
+      - "export OS_PASSWORD=Aa123456"
+      - "export OS_AUTH_URL=http://{{ controller_name }}:5000/v3"
+      - "export OS_IDENTITY_API_VERSION=3"
+      - "export OS_IMAGE_API_VERSION=2"

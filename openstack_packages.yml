@@ -1,0 +1,57 @@
+#- name: Test subscription-manager and YUM
+#  hosts: test
+#  roles:
+#    - common
+
+
+---
+#- include: demo_playbook_iter_05.yml our_desired_package_name=nginx
+- hosts: test-compute
+  vars:
+    subscription_manager_user: 'daniel@tera-sky.com'
+    subscription_manager_pass: 'Vaknin123'
+    subscription_manager_pool: 'Red Hat Enterprise Linux Server'
+#  handlers:
+#  - name: print-or-not
+#    debug: msg='Message is {{ demo_message }}'
+#  - name: start-nginx
+#    service: state=started name=nginx
+#    sudo: yes
+#  - name: stop-nginx
+#    service: state=stopped name=nginx
+#    sudo: yes
+#  - name: fizz
+#    debug: msg='fizz'
+#  - name: buzz
+#    debug: msg='buzz'
+
+# NOT WORKING: #
+#  tasks:
+#  - name: Subscribe to Red Hat
+#    redhat_subscription: state=present username={{ subscription_manager_user }} password={{ subscription_manager_pass }} pool='^(Red Hat Enterprise Linux)$'
+
+#  - name: Disable all repositories
+#    yum_repository:
+#      name: ^
+#      state: absent
+
+#  - name: Enable only the required repositories
+#    yum_repository:
+#      name: rhel-7-server-rpms
+#      enabled: yes
+
+##########################
+
+  tasks:
+  - name: Enable the OpenStack repository
+    yum: state=present name=https://rdoproject.org/repos/rdo-release.rpm
+    sudo: yes
+  
+  - name: Upgrade all packages
+    yum: name=* state=latest
+  
+  - name: Install the OpenStack client
+    yum: name=python-openstackclient state=present
+
+  - name: Install openstack-selinux package
+    yum: name=openstack-selinux state=present

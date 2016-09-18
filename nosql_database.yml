@@ -1,0 +1,15 @@
+---
+- hosts: test
+  tasks:
+  - name: Install NoSQL (MongoDB) database for Telemetry
+    yum: name=mongodb-server,mongodb state=present
+  - name: Edit the file /etc/mongod.conf
+    replace: dest=/etc/mongod.conf
+             regexp='^(bind_ip = 127.0.0.1)$'
+             replace='bind_ip = {{ ansible_default_ipv4.address }}'
+  - replace: dest=/etc/mongod.conf
+             regexp='^(#smallfiles = true)$'
+             replace='smallfiles = true'
+  - name: Start the database service and configure it to start when the system boots
+    service: name=mongod.service state=started enabled=yes
+

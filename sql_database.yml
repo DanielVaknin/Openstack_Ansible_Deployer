@@ -1,0 +1,66 @@
+---
+#- include: demo_playbook_iter_05.yml our_desired_package_name=nginx
+- hosts: test
+#  handlers:
+#  - name: print-or-not
+#    debug: msg='Message is {{ demo_message }}'
+#  - name: start-nginx
+#    service: state=started name=nginx
+#    sudo: yes
+#  - name: stop-nginx
+#    service: state=stopped name=nginx
+#    sudo: yes
+#  - name: fizz
+#    debug: msg='fizz'
+#  - name: buzz
+#    debug: msg='buzz'
+
+  vars:
+    controller_ip: '192.168.105.210'
+  
+  tasks:
+  - name: Install MySQL (MariaDB) packages
+    yum: name=mariadb,mariadb-server,python2-PyMySQL,MySQL-python state=present
+  - name: Create and edit the /etc/my.cnf.d/openstack.cnf file
+    ini_file: dest=/etc/my.cnf.d/openstack.cnf
+              section=mysqld
+              option=bind-address
+              value={{ controller_ip }}
+              backup=yes
+  - ini_file: dest=/etc/my.cnf.d/openstack.cnf
+              section=mysqld
+              option=default-storage-engine
+              value=innodb
+              backup=no
+  - ini_file: dest=/etc/my.cnf.d/openstack.cnf
+              section=mysqld
+              option=innodb_file_per_table
+              backup=no
+  - ini_file: dest=/etc/my.cnf.d/openstack.cnf
+              section=mysqld
+              option=max_connections
+              value=4096
+              backup=no
+  - ini_file: dest=/etc/my.cnf.d/openstack.cnf
+              section=mysqld
+              option=collation-server
+              value=utf8_general_ci
+              backup=no
+  - ini_file: dest=/etc/my.cnf.d/openstack.cnf
+              section=mysqld
+              option=character-set-server
+              value=utf8
+              backup=no
+  - replace: dest=/etc/my.cnf.d/openstack.cnf
+             regexp='^(innodb_file_per_table = None)$'
+             replace='innodb_file_per_table'
+  - name: Start the database service and configure it to start when the system boots
+    service: name=mariadb.service state=started enabled=yes
+  - name: Remove all anonymous user accounts
+    mysql_user: name='' host_all=yes state=absent
+  - name: Remove the "test" database
+    mysql_db: name=test state=absent
+  - name: Set the root password
+    mysql_user: name=root password=Aa123456
+
+## Need to do: mysql_secure_installation script ##

@@ -1,0 +1,26 @@
+---
+- name: Subscribe to Red Hat
+  redhat_subscription: state=present username={{ subscription_manager_user }} password={{ subscription_manager_pass }} --pool='^(Red Hat Enterprise Server)$'
+
+- name: Disable all repositories
+  yum_repository:
+    name: ^
+    enabled: no
+
+- name: Enable only the required repositories
+  yum_repository:
+    name: rhel-7-server-rpms,rhel-7-server-optional-rpms,rhel-7-server-extras-rpms,rhel-7-server-rh-common-rpms
+    enabled: yes
+
+- name: Enable the OpenStack repository
+  yum: state=present name=https://rdoproject.org/repos/rdo-release.rpm
+  sudo: yes
+
+- name: Upgrade all packages
+  yum: name=^ state=latest
+
+- name: Install the OpenStack client
+  yum: name=python-openstackclient state=present
+
+- name: Install openstack-selinux package
+  yum: name=openstack-selinux state=present

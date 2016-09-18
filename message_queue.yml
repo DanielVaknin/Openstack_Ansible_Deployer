@@ -1,0 +1,17 @@
+---
+- hosts: test
+  vars:
+    rabbit_pass: '830373bd928e23be84ab'
+  tasks:
+  - name: Install RabbitMQ message queue
+    yum: name=rabbitmq-server state=present
+  - name: Start the message queue service and configure it to start when the system boots
+    service: name=rabbitmq-server.service state=started enabled=yes
+  - name: Add the openstack user to RabbitMQ
+    rabbitmq_user: user=openstack
+                   password={{ rabbit_pass }}
+                   vhost=/
+                   configure_priv=.*
+                   read_priv=.*
+                   write_priv=.*
+                   state=present

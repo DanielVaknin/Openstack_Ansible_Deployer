@@ -1,0 +1,126 @@
+---
+- hosts: test
+  vars:
+    glance_dbpass: 'c1548093f4d19be0cb7d' 
+    glance_password: 'Glance123'
+    admin_password: 'Aa123456'
+    controller_name: 'controller0'
+  environment:
+    OS_PROJECT_DOMAIN_NAME: default
+    OS_USER_DOMAIN_NAME: default
+    OS_PROJECT_NAME: admin
+    OS_USERNAME: admin
+    OS_PASSWORD: Aa123456
+    OS_AUTH_URL: http://{{ controller_name }}:35357/v3
+    OS_IDENTITY_API_VERSION: 3
+    OS_IMAGE_API_VERSION: 2
+  tasks:
+  - name: Create the Glance database
+    mysql_db: login_user=root login_password=Aa123456 name=glance state=present
+  - name: Grant proper access to the Glance database
+    mysql_user: login_user=root
+                login_password=Aa123456
+                name=glance
+                password={{ glance_dbpass }}
+                priv=glance.*:ALL
+                state=present
+  - name: Grant proper access to the Glance database
+    mysql_user: login_user=root
+                login_password=Aa123456
+                name=glance
+                password={{ glance_dbpass }}
+                host=%
+                priv=glance.*:ALL
+                state=present
+  - name: Create the glance user
+    os_user:
+      state: present
+      name: glance
+      password: "{{ glance_password }}"
+      domain: default
+      auth_type: password
+      auth:
+        username: admin
+        password: Aa123456
+        auth_url: http://{{ controller_name }}:35357/v3
+  - name: Add the admin role to the glance user and service project
+    os_user_role:
+      user: glance
+      role: admin
+      project: service
+  - name: Create the service entity for Glance
+    os_keystone_service:
+      state: present
+      name: glance
+      service_type: image
+      description: OpenStack Image
+### Replace with shell script
+  - name: Create the Image service API endpoint - public
+    shell: openstack endpoint create --region RegionOne image public http://{{ controller_name }}:9292
+  - name: Create the Identity service API endpoint - internal
+    shell: openstack endpoint create --region RegionOne image internal http://{{ controller_name }}:9292
+  - name: Create the Identity service API endpoint - admin
+    shell: openstack endpoint create --region RegionOne image admin http://{{ controller_name }}:9292
+###
+  - name: Install Glance packages
+    yum: name=openstack-glance state=present
+  - name: Edit the /etc/glance/glance-api.conf file
+    ini_file: dest=/etc/glance/glance-api.conf
+              section={{ item.section }}
+              option={{ item.option }}
+              value={{ item.value }}
+              backup={{ item.backup }}
+    with_items:
+      - { section: 'database', option: 'connection', value: 'mysql+pymysql://glance:{{ glance_dbpass }}@{{ controller_name }}/glance', backup: 'yes' }
+      - { section: 'keystone_authtoken', option: 'auth_uri', value: 'http://{{ controller_name }}:5000', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_url', value: 'http://{{ controller_name }}:35357', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'memcached_servers', value: '{{ controller_name }}:11211', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_type', value: 'password', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'project_domain_name', value: 'default', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'user_domain_name', value: 'default', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'project_name', value: 'service', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'username', value: 'glance', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'password', value: '{{ glance_password }}', backup: 'no' }
+      - { section: 'paste_deploy', option: 'flavor', value: 'keystone', backup: 'no' }
+      - { section: 'glance_store', option: 'stores', value: 'file,http', backup: 'no' }
+      - { section: 'glance_store', option: 'default_store', value: 'file', backup: 'no' }
+      - { section: 'glance_store', option: 'filesystem_store_datadir', value: '/var/lib/glance/images/', backup: 'no' }
+  - name: Edit the /etc/glance/glance-registry.conf file
+    ini_file: dest=/etc/glance/glance-registry.conf
+              section={{ item.section }}
+              option={{ item.option }}
+              value={{ item.value }}
+              backup={{ item.backup }}
+    with_items:
+      - { section: 'database', option: 'connection', value: 'mysql+pymysql://glance:{{ glance_dbpass }}@{{ controller_name }}/glance', backup: 'yes' }
+      - { section: 'keystone_authtoken', option: 'auth_uri', value: 'http://{{ controller_name }}:5000', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_url', value: 'http://{{ controller_name }}:35357', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'memcached_servers', value: '{{ controller_name }}:11211', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'auth_type', value: 'password', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'project_domain_name', value: 'default', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'user_domain_name', value: 'default', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'project_name', value: 'service', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'username', value: 'glance', backup: 'no' }
+      - { section: 'keystone_authtoken', option: 'password', value: '{{ glance_password }}', backup: 'no' }
+      - { section: 'paste_deploy', option: 'flavor', value: 'keystone', backup: 'no' }
+  - name: Populate the Image service database
+    shell: /usr/bin/glance-manage db_sync
+    args:
+      executable: /bin/sh
+    become: true
+    become_user: glance
+  - name: Start the Glance-API service and configure it to start when the system boots
+    service: name=openstack-glance-api.service state=started enabled=yes
+  - name: Start the Glance-Registry service and configure it to start when the system boots
+    service: name=openstack-glance-registry.service state=started enabled=yes
+#  - name: Source the admin credentials
+#    shell: . admin-openrc
+  - name: Download the CirrOS source image
+    get_url: url=http://download.cirros-cloud.net/0.3.4/cirros-0.3.4-x86_64-disk.img dest=/root/
+  - name: Upload the image to the Image service
+    os_image:
+      name: cirros
+      container_format: bare
+      disk_format: qcow2
+      state: present
+      filename: cirros-0.3.4-x86_64-disk.img
