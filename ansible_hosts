@@ -1,0 +1,13 @@
+localhost ansible_python_interpreter="/usr/bin/env python"
+
+[controllers]
+192.168.105.80
+
+[computes]
+192.168.105.90
+
+[test]
+192.168.105.210
+
+[test-compute]
+192.168.105.211
